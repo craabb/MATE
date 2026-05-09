@@ -3,14 +3,16 @@ from pydantic import computed_field
 
 
 class Settings(BaseSettings):
+    BOT_TOKEN: str
     DB_HOST: str = "localhost"
     DB_PORT: int = 5432
     DB_USER: str = "postgres"
     DB_PASS: str = "111"
     DB_NAME: str = "dailymate"
-    OPENAI_API_KEY: str = ""  # Для будущей интеграции
 
-    BOT_TOKEN: str
+
+    GROQ_API_KEY: str = "gsk_...."
+    GROQ_MODEL: str = "llama-3.3-70b-versatile"
 
     @computed_field
     @property

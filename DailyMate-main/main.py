@@ -15,7 +15,7 @@ async def main():
     logging.basicConfig(level=logging.INFO)
 
     # Раскомментируйте только при первом запуске или после новой миграции
-    # await init_db()
+    await init_db()
 
     bot = Bot(token=settings.BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     dp = Dispatcher()
