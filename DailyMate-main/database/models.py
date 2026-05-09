@@ -1,7 +1,8 @@
 from datetime import datetime
 import enum
 
-from sqlalchemy import Integer, BigInteger, String, DateTime, ForeignKey, Boolean, Enum, CheckConstraint, Text, Float, JSON
+from sqlalchemy import Integer, BigInteger, String, DateTime, ForeignKey, Boolean, Enum, CheckConstraint, Text, Float, \
+    JSON
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 # from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.sql import func
@@ -14,6 +15,7 @@ class TaskStatus(enum.Enum):
     completed = "completed"
     overdue = "overdue"
     postponed = "postponed"
+
 
 class ReminderStatus(enum.Enum):
     scheduled = "scheduled"
@@ -51,10 +53,11 @@ class Category(Base):
 class Checklist(Base):
     __tablename__ = "checklists"
 
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
     user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     title: Mapped[str] = mapped_column(String(128), nullable=False)
-    steps: Mapped[dict] = mapped_column(JSON)
-    is_template: Mapped[bool] = mapped_column(Boolean)
+    steps: Mapped[dict] = mapped_column(JSON, default=lambda: {"steps": []})
+    is_template: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -72,7 +75,7 @@ class Task(Base):
         CheckConstraint("priority >= 1 AND priority <= 3"),
         nullable=True
     )
-    original_text: Mapped[str] = mapped_column(Text , nullable=False)
+    original_text: Mapped[str] = mapped_column(Text, nullable=False)
     ai_extraction: Mapped[dict] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     completed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -89,7 +92,7 @@ class Reminder(Base):
 
 class AIInteraction(Base):
     __tablename__ = "ai_interactions"
-    
+
     user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"))
     action_type: Mapped[AIInteractionType] = mapped_column(Enum(AIInteractionType))
     request_payload: Mapped[str] = mapped_column(Text, nullable=False)

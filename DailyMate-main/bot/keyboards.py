@@ -41,5 +41,21 @@ def task_actions_kb(task_id: int, current_status: str) -> InlineKeyboardMarkup:
         builder.button(text="Завершить", callback_data=f"action_finish_{task_id}")
 
     builder.button(text="В меню", callback_data="to_main_menu")
-    builder.adjust(1)  # Кнопки в один столбик
+    builder.adjust(1)
     return builder.as_markup()
+
+def checklist_main_kb() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.button(text="➕ Создать чек-лист", callback_data="checklist_create")
+    builder.button(text="📋 Все чек-листы", callback_data="checklist_view_all")
+    builder.button(text="🔙 В меню", callback_data="to_main_menu")
+    builder.adjust(1)
+    return builder.as_markup()
+
+def checklist_item_kb(checklist_id: int) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.button(text="📝 Показать задачи", callback_data=f"checklist_show_{checklist_id}")
+    builder.button(text=" Назад", callback_data="checklist_view_all")
+    builder.adjust(1)
+    return builder.as_markup()
+
