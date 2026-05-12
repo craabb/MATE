@@ -11,7 +11,7 @@ class Settings(BaseSettings):
     DB_NAME: str = "dailymate"
 
 
-    GROQ_API_KEY: str = "gsk_...."
+    GROQ_API_KEY: str = "gsk..."
     GROQ_MODEL: str = "llama-3.3-70b-versatile"
 
     @computed_field
