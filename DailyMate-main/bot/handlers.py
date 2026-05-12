@@ -3,7 +3,7 @@ from datetime import datetime, timedelta
 from typing import List
 
 from aiogram import Router, F
-from aiogram.filters import CommandStart
+from aiogram.filters import CommandStart, StateFilter
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
@@ -82,7 +82,7 @@ async def ask_task_text(cb: CallbackQuery):
     await cb.answer()
 
 
-@router.message(F.text & ~F.text.startswith("/"))
+@router.message(StateFilter(None), F.text & ~F.text.startswith("/"))
 async def process_text_input(message: Message, state: FSMContext, session: AsyncSession):
     await message.bot.send_chat_action(message.chat.id, "typing")
     user_res = await session.execute(select(User.id).where(User.telegram_id == message.from_user.id))
@@ -290,8 +290,10 @@ async def snooze_reminder(cb: CallbackQuery, session: AsyncSession):
         return await cb.answer("❌ Ошибка", show_alert=True)
 
     res = await session.execute(
-        select(Reminder).where(Reminder.task_id == task_id, Reminder.status == ReminderStatus.sent))
+        select(Reminder).where(Reminder.task_id == task_id)
+    )
     rem = res.scalar_one_or_none()
+
     if rem:
         rem.scheduled_at = datetime.now() + timedelta(hours=1)
         rem.status = ReminderStatus.scheduled
@@ -300,6 +302,7 @@ async def snooze_reminder(cb: CallbackQuery, session: AsyncSession):
         await cb.answer("⏰ Напоминание перенесено на 1 час", show_alert=True)
     else:
         await cb.answer("Напоминание не найдено", show_alert=True)
+
 
 
 # --- FR-05: Генерация чек-листов ---
@@ -333,10 +336,8 @@ async def create_checklist_from_topic(msg: Message, state: FSMContext, session: 
     """
     topic = msg.text.strip()
 
-    # Генерация шагов через ИИ
     steps = await ai_service.generate_checklist(topic)
 
-    # Получаем ID пользователя
     user_result = await session.execute(select(User.id).where(User.telegram_id == msg.from_user.id))
     user_id = user_result.scalar_one_or_none()
     if not user_id:
@@ -344,17 +345,15 @@ async def create_checklist_from_topic(msg: Message, state: FSMContext, session: 
         await state.clear()
         return
 
-    # Создаем и сохраняем ТОЛЬКО чек-лист
     new_checklist = Checklist(
         user_id=user_id,
         title=topic,
-        steps={"steps": steps},  # Шаги хранятся прямо в JSON-поле
-        is_template=True  # Это ключевой флаг для фильтрации
+        steps={"steps": steps},
+        is_template=True
     )
     session.add(new_checklist)
     await session.commit()
 
-    # Формируем ответ пользователю
     formatted_steps = "\n".join(f"{i}. {step}" for i, step in enumerate(steps, start=1))
     response_text = (
         f"✅ Чек-лист «{topic}» успешно создан!\n\n"
@@ -388,15 +387,18 @@ async def view_all_checklists(cb: CallbackQuery, session: AsyncSession):
         await cb.answer()
         return
 
-    # Формируем текст со списком всех чек-листов
     response_lines = ["📋 Ваши чек-листы:\n"]
     keyboard_buttons = []
 
     for cl in checklists:
         step_count = len(cl.steps.get("steps", []))
         response_lines.append(f"• {cl.title}({step_count} шагов)")
+
+        callback_data = f"view_checklist_{cl.id}"
+        print(f"🔍 Создаю кнопку: text='📄 {cl.title}', callback_data='{callback_data}'")
+
         keyboard_buttons.append(
-            [InlineKeyboardButton(text=f"📄 {cl.title}", callback_data=f"view_checklist_{cl.id}")]
+            [InlineKeyboardButton(text=f"📄 {cl.title}", callback_data=callback_data)]
         )
 
     keyboard_buttons.append([InlineKeyboardButton(text="🔙 Назад", callback_data="checklists")])
@@ -415,7 +417,15 @@ async def view_single_checklist(cb: CallbackQuery, session: AsyncSession):
         return await cb.answer("❌ Неверный формат данных.", show_alert=True)
 
     checklist = await session.get(Checklist, checklist_id)
-    if not checklist or checklist.user_id != cb.from_user.id:
+    if not checklist:
+        return await cb.answer("❌ Чек-лист не найден.", show_alert=True)
+
+    user_res = await session.execute(
+        select(User.id).where(User.telegram_id == cb.from_user.id)
+    )
+    user_db_id = user_res.scalar_one_or_none()
+
+    if not user_db_id or checklist.user_id != user_db_id:
         return await cb.answer("❌ Чек-лист не найден.", show_alert=True)
 
     steps = checklist.steps.get("steps", [])
@@ -426,11 +436,110 @@ async def view_single_checklist(cb: CallbackQuery, session: AsyncSession):
         detail_text = f"📋 {checklist.title}\n\n✅ Шаги:\n{steps_list}"
 
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🔙 К списку чек-листов", callback_data="checklist_view_all")]
+        [InlineKeyboardButton(text="🔙 К списку чек-листов", callback_data="checklist_view_all")],
+        [InlineKeyboardButton(text="🗑️ Удалить чек-лист", callback_data=f"checklist_delete_{checklist_id}")]
     ])
 
     await cb.message.edit_text(detail_text, reply_markup=kb, parse_mode="Markdown")
     await cb.answer()
+
+# --- ОБРАБОТЧИКИ ЧЕК-ЛИСТОВ
+
+@router.callback_query(F.data.startswith("checklist_delete_confirm_"))
+async def delete_checklist_execute(cb: CallbackQuery, session: AsyncSession):
+    """Удаляет чек-лист"""
+    try:
+        checklist_id = int(cb.data.split("_")[3])
+    except (ValueError, IndexError):
+        return await cb.answer("❌ Неверный формат данных.", show_alert=True)
+
+    checklist = await session.get(Checklist, checklist_id)
+    if not checklist:
+        return await cb.answer("❌ Чек-лист не найден.", show_alert=True)
+
+    user_res = await session.execute(select(User.id).where(User.telegram_id == cb.from_user.id))
+    user_db_id = user_res.scalar_one_or_none()
+
+    if not user_db_id or checklist.user_id != user_db_id:
+        return await cb.answer("❌ Доступ запрещён.", show_alert=True)
+
+    await session.delete(checklist)
+    await session.commit()
+
+    await cb.message.edit_text(
+        f"✅ Чек-лист **{checklist.title}** успешно удален.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="📋 Все чек-листы", callback_data="checklist_view_all")]
+        ]),
+        parse_mode="Markdown"
+    )
+    await cb.answer()
+
+
+@router.callback_query(F.data.startswith("checklist_delete_"))
+async def delete_checklist_confirm(cb: CallbackQuery, session: AsyncSession):
+    """Запрашивает подтверждение удаления"""
+    try:
+        checklist_id = int(cb.data.split("_")[2])
+    except (ValueError, IndexError):
+        return await cb.answer("❌ Неверный формат данных.", show_alert=True)
+
+    checklist = await session.get(Checklist, checklist_id)
+    if not checklist:
+        return await cb.answer("❌ Чек-лист не найден.", show_alert=True)
+
+    user_res = await session.execute(select(User.id).where(User.telegram_id == cb.from_user.id))
+    user_db_id = user_res.scalar_one_or_none()
+
+    if not user_db_id or checklist.user_id != user_db_id:
+        return await cb.answer("❌ Доступ запрещён.", show_alert=True)
+
+    await cb.message.edit_text(
+        f"⚠️ Вы уверены, что хотите удалить чек-лист?\n\n"
+        f"📋 {checklist.title}\n"
+        f"🗑️ Это действие нельзя отменить.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="❌ Отмена", callback_data=f"view_checklist_{checklist_id}")],
+            [InlineKeyboardButton(text="✅ Да, удалить", callback_data=f"checklist_delete_confirm_{checklist_id}")]
+        ]),
+        parse_mode="Markdown"
+    )
+    await cb.answer()
+
+
+@router.callback_query(F.data.startswith("view_checklist_"))
+async def view_single_checklist(cb: CallbackQuery, session: AsyncSession):
+    """Показывает детали чек-листа"""
+    try:
+        checklist_id = int(cb.data.split("_")[2])
+    except (ValueError, IndexError):
+        return await cb.answer("❌ Неверный формат данных.", show_alert=True)
+
+    checklist = await session.get(Checklist, checklist_id)
+    if not checklist:
+        return await cb.answer("❌ Чек-лист не найден.", show_alert=True)
+
+    user_res = await session.execute(select(User.id).where(User.telegram_id == cb.from_user.id))
+    user_db_id = user_res.scalar_one_or_none()
+
+    if not user_db_id or checklist.user_id != user_db_id:
+        return await cb.answer("❌ Чек-лист не найден.", show_alert=True)
+
+    steps = checklist.steps.get("steps", [])
+    if not steps:
+        detail_text = f"📋 {checklist.title}\n\n📭 Этот чек-лист пуст."
+    else:
+        steps_list = "\n".join(f"⬜ {i}. {step}" for i, step in enumerate(steps, start=1))
+        detail_text = f"📋 {checklist.title}\n\n✅ Шаги:\n{steps_list}"
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔙 К списку чек-листов", callback_data="checklist_view_all")],
+        [InlineKeyboardButton(text="🗑️ Удалить чек-лист", callback_data=f"checklist_delete_{checklist_id}")]
+    ])
+
+    await cb.message.edit_text(detail_text, reply_markup=kb, parse_mode="Markdown")
+    await cb.answer()
+
 
 # --- UC-06: Сводка ---
 @router.callback_query(F.data == "daily_summary")

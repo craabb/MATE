@@ -54,8 +54,7 @@ def checklist_main_kb() -> InlineKeyboardMarkup:
 
 def checklist_item_kb(checklist_id: int) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    builder.button(text="📝 Показать задачи", callback_data=f"checklist_show_{checklist_id}")
-    builder.button(text=" Назад", callback_data="checklist_view_all")
+    builder.button(text="📝 Показать задачи", callback_data=f"view_checklist_{checklist_id}")
+    builder.button(text="🔙 Назад", callback_data="checklist_view_all")
     builder.adjust(1)
     return builder.as_markup()
-
